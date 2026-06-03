@@ -14,8 +14,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://collegefit.vercel.app"),
   title: "CollegeFit | Smart Indian College Recommendation System",
-  description: "Find the best-fit engineering college (IITs, NITs, IIITs, and Top Private Universities) based on your JEE percentile, budget, and branches.",
+  description: "Find the best-fit engineering college based on percentile, budget, and preferences.",
+  openGraph: {
+    title: "CollegeFit",
+    description: "AI-powered engineering college recommendation platform.",
+    images: ["/og-image.png"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "CollegeFit",
+    description: "AI-powered engineering college recommendation platform.",
+    images: ["/og-image.png"],
+  },
 };
 
 export default function RootLayout({
