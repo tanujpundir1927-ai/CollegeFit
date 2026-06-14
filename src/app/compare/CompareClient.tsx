@@ -9,298 +9,650 @@ interface CompareClientProps {
   initialColleges: College[];
 }
 
-export default function CompareClient({ initialColleges }: CompareClientProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [collegesToCompare, setCollegesToCompare] = useState<College[]>(initialColleges);
+// ── Empty State ───────────────────────────────────────────────────────────────
+function EmptyCompareState() {
+  return (
+    <div className="empty-state animate-scale-in">
+      <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>⚖️</div>
+      <h2
+        style={{
+          fontSize: "1.3rem",
+          fontWeight: 800,
+          color: "#1e293b",
+          letterSpacing: "-0.02em",
+        }}
+      >
+        No colleges selected for comparison
+      </h2>
+      <p
+        style={{
+          fontSize: "0.875rem",
+          color: "#64748b",
+          marginTop: "0.5rem",
+          maxWidth: "28rem",
+          lineHeight: 1.6,
+        }}
+      >
+        Go back to the recommendation results and check{" "}
+        <strong style={{ color: "#6366f1" }}>Compare</strong> on up to 3 colleges
+        you want to inspect side-by-side.
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.75rem", flexWrap: "wrap", justifyContent: "center" }}>
+        <Link
+          href="/"
+          id="empty-compare-search"
+          className="btn-primary"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.35rem",
+            padding: "0.65rem 1.5rem",
+            fontSize: "0.875rem",
+            borderRadius: "0.75rem",
+            textDecoration: "none",
+          }}
+        >
+          → Start New Search
+        </Link>
+      </div>
+    </div>
+  );
+}
 
-  // Sync state with localStorage on mount (for consistency)
+// ── Main Component ────────────────────────────────────────────────────────────
+export default function CompareClient({ initialColleges }: CompareClientProps) {
+  const router       = useRouter();
+  const searchParams = useSearchParams();
+  const [colleges, setColleges] = useState<College[]>(initialColleges);
+  const [explaining, setExplaining] = useState(false);
+  const [aiSummary, setAiSummary] = useState("");
+
+  const handleExplainWithAI = async () => {
+    if (colleges.length < 2 || explaining) return;
+    setExplaining(true);
+    setAiSummary("");
+
+    try {
+      const collegeIds = colleges.map((c) => c.id);
+      const res = await fetch("/api/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collegeIds }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to generate AI comparison.");
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No stream reader available.");
+
+      const decoder = new TextDecoder();
+      let streamText = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        streamText += chunk;
+        setAiSummary(streamText);
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : "Failed to generate comparison.";
+      setAiSummary(`Error: ${message} Please check your API key.`);
+    } finally {
+      setExplaining(false);
+    }
+  };
+
+  const renderMarkdown = (markdown: string) => (
+    <div>
+      {markdown.split("\n").map((rawLine, index) => {
+        const line = rawLine.replace(/^#{1,3}\s+/, "").replace(/\*\*/g, "").trim();
+        if (!line) return <div key={index} style={{ height: "0.45rem" }} />;
+        const isHeading = /^#{1,3}\s+/.test(rawLine);
+        const isBullet = /^[-*]\s+/.test(rawLine);
+        const text = line.replace(/^[-*]\s+/, "");
+        if (isHeading) {
+          return <h4 key={index} style={{ margin: "1rem 0 0.4rem", fontWeight: 800, color: "#8b5cf6", fontSize: "0.92rem" }}>{text}</h4>;
+        }
+        return <p key={index} style={{ margin: "0.28rem 0", paddingLeft: isBullet ? "0.8rem" : 0, fontSize: "0.82rem" }}>{isBullet ? `• ${text}` : text}</p>;
+      })}
+    </div>
+  );
+
   useEffect(() => {
     const idsFromParams = searchParams.get("ids");
     if (idsFromParams) {
       const ids = idsFromParams.split(",");
       localStorage.setItem("compare_colleges", JSON.stringify(ids));
     } else {
-      // Fallback: If no query params exist, try loading from localStorage and redirect
       const stored = localStorage.getItem("compare_colleges");
       if (stored) {
         try {
           const ids = JSON.parse(stored) as string[];
-          if (ids.length > 0) {
-            router.replace(`/compare?ids=${ids.join(",")}`);
-          }
-        } catch (e) {
-          // ignore parsing error
+          if (ids.length > 0) router.replace(`/compare?ids=${ids.join(",")}`);
+        } catch {
+          /* ignore */
         }
       }
     }
   }, [searchParams, router]);
 
-  // Remove a college from comparison
   const handleRemove = (id: string) => {
-    const updated = collegesToCompare.filter((c) => c.id !== id);
-    setCollegesToCompare(updated);
-
+    const updated    = colleges.filter((c) => c.id !== id);
+    setColleges(updated);
     const updatedIds = updated.map((c) => c.id);
     localStorage.setItem("compare_colleges", JSON.stringify(updatedIds));
-
-    if (updatedIds.length > 0) {
-      router.push(`/compare?ids=${updatedIds.join(",")}`);
-    } else {
-      router.push("/compare");
-    }
+    if (updatedIds.length > 0) router.push(`/compare?ids=${updatedIds.join(",")}`);
+    else router.push("/compare");
   };
 
   const handleClearAll = () => {
     localStorage.removeItem("compare_colleges");
-    setCollegesToCompare([]);
+    setColleges([]);
     router.push("/");
   };
 
-  // Helper to find the best metric to highlight
-  const getBestMetric = (field: keyof College, order: "asc" | "desc") => {
-    if (collegesToCompare.length < 2) return null;
-    const values = collegesToCompare.map((c) => c[field] as number);
-    return order === "asc" ? Math.min(...values) : Math.max(...values);
+  // Best metric helpers
+  const getBest = (field: keyof College, order: "asc" | "desc") => {
+    if (colleges.length < 2) return null;
+    const vals = colleges.map((c) => c[field] as number);
+    return order === "asc" ? Math.min(...vals) : Math.max(...vals);
   };
 
-  const bestRank = getBestMetric("nirf_rank", "asc"); // lower rank is better
-  const bestPackage = getBestMetric("avg_package_lpa", "desc"); // higher placement is better
-  const bestFees = getBestMetric("fees_per_year_lakh", "asc"); // lower fees is better
-  const bestResearch = getBestMetric("research_score", "desc"); // higher research score is better
+  const bestRank     = getBest("nirf_rank", "asc");
+  const bestPackage  = getBest("avg_package_lpa", "desc");
+  const bestFees     = getBest("fees_per_year_lakh", "asc");
+  const bestResearch = getBest("research_score", "desc");
 
-  if (collegesToCompare.length === 0) {
-    return (
-      <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center shadow-sm">
-        <h2 className="text-xl font-bold text-slate-800">No colleges selected for comparison</h2>
-        <p className="text-slate-500 mt-2 text-sm max-w-md mx-auto">
-          Go back to the recommendation results list and check "Compare" on the colleges you want to inspect side-by-side.
-        </p>
-        <div className="mt-6 flex justify-center gap-4">
-          <Link
-            href="/"
-            className="rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm"
-          >
-            Start New Recommendation Search
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  if (colleges.length === 0) return <EmptyCompareState />;
+
+  // ── Row config ──────────────────────────────────────────────────────────
+  type RowCell = { value: string; isBest: boolean; suffix?: string };
+  const rows: { label: string; icon: string; render: (c: College) => RowCell }[] = [
+    {
+      label: "NIRF Rank",
+      icon: "🏅",
+      render: (c: College): RowCell => {
+        const isBest = c.nirf_rank === bestRank;
+        return { value: `#${c.nirf_rank}`, isBest, suffix: isBest ? "Highest Ranked" : undefined };
+      },
+    },
+    {
+      label: "Avg Placement",
+      icon: "💼",
+      render: (c: College): RowCell => {
+        const isBest = c.avg_package_lpa === bestPackage;
+        return { value: `₹${c.avg_package_lpa} LPA`, isBest, suffix: isBest ? "Best Package" : undefined };
+      },
+    },
+    {
+      label: "Annual Fees",
+      icon: "💰",
+      render: (c: College) => {
+        const isBest = c.fees_per_year_lakh === bestFees;
+        return { value: `₹${c.fees_per_year_lakh} Lakhs`, isBest, suffix: isBest ? "Most Affordable" : undefined };
+      },
+    },
+    {
+      label: "JEE Cutoff",
+      icon: "📊",
+      render: (c: College) => ({ value: `${c.cutoff_percentile}%`, isBest: false }),
+    },
+    {
+      label: "Campus Size",
+      icon: "🏛️",
+      render: (c: College) => ({ value: `${c.campus_size_acres} Acres`, isBest: false }),
+    },
+    {
+      label: "Research Score",
+      icon: "🔬",
+      render: (c: College) => {
+        const isBest = c.research_score === bestResearch;
+        return { value: `${c.research_score}/10`, isBest, suffix: isBest ? "Best Research" : undefined };
+      },
+    },
+    {
+      label: "Facilities",
+      icon: "🏠",
+      render: (c: College) => ({
+        value: [c.has_hostel ? "Hostel ✓" : "No Hostel", c.is_coed ? "Co-Ed ✓" : "Single-Sex"].join("\n"),
+        isBest: false,
+      }),
+    },
+  ];
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-      
-      {/* Table Toolbar Header */}
-      <div className="p-4 sm:p-6 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+    <div
+      className="animate-fade-in"
+      style={{
+        background: "var(--form-bg)",
+        borderRadius: "1.25rem",
+        border: "1px solid var(--border-subtle)",
+        overflow: "hidden",
+        boxShadow: "var(--shadow-card)",
+      }}
+    >
+      {/* ── Toolbar ──────────────────────────────────────────────── */}
+      <div
+        style={{
+          padding: "1.25rem 1.5rem",
+          background: "linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.02) 100%)",
+          borderBottom: "1px solid var(--border-subtle)",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "1rem",
+        }}
+      >
         <div>
-          <h2 className="text-lg font-bold text-slate-900">Comparison Matrix</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Comparing {collegesToCompare.length} of max 3 colleges. Best values highlighted in green.
+          <h2
+            style={{
+              fontSize: "1.05rem",
+              fontWeight: 800,
+              color: "var(--foreground)",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            Comparison Matrix
+          </h2>
+          <p style={{ fontSize: "0.75rem", color: "var(--foreground)", opacity: 0.55, marginTop: "0.2rem" }}>
+            Comparing{" "}
+            <strong style={{ color: "#6366f1" }}>{colleges.length}</strong> of max 3 colleges.{" "}
+            <span style={{ color: "#059669", fontWeight: 600 }}>Green = best value</span>
           </p>
         </div>
-        <button
-          onClick={handleClearAll}
-          className="text-xs font-bold text-rose-600 hover:text-rose-800 transition-colors border border-rose-200 bg-rose-50 hover:bg-rose-100/50 px-3 py-1.5 rounded-lg cursor-pointer"
-        >
-          Clear Comparison Deck
-        </button>
+
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          <button
+            onClick={handleExplainWithAI}
+            disabled={colleges.length < 2 || explaining}
+            className="btn-primary"
+            style={{
+              fontSize: "0.78rem",
+              borderRadius: "0.6rem",
+              padding: "0.45rem 1rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.35rem",
+              opacity: colleges.length < 2 ? 0.5 : 1,
+            }}
+          >
+            {explaining ? "Explaining..." : "✨ Explain with AI"}
+          </button>
+
+          <button
+            id="compare-clear-all"
+            onClick={handleClearAll}
+            style={{
+              fontSize: "0.78rem",
+              fontWeight: 700,
+              color: "#dc2626",
+              background: "rgba(220,38,38,0.06)",
+              border: "1px solid rgba(220,38,38,0.2)",
+              borderRadius: "0.6rem",
+              padding: "0.45rem 0.875rem",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget).style.background = "rgba(220,38,38,0.12)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget).style.background = "rgba(220,38,38,0.06)";
+            }}
+          >
+            ✕ Clear All
+          </button>
+        </div>
       </div>
 
-      {/* Responsive comparison table wrapper */}
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[600px] border-collapse table-fixed text-sm">
+      {/* AI Comparison Summary Panel */}
+      {(explaining || aiSummary) && (
+        <div
+          style={{
+            padding: "1.5rem",
+            background: "rgba(99, 102, 241, 0.03)",
+            borderBottom: "1px solid rgba(99,102,241,0.1)",
+            position: "relative",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.875rem" }}>
+            <span style={{ fontSize: "1.1rem" }}>✨</span>
+            <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#8b5cf6", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              AI Comparison Report
+            </span>
+          </div>
+
+          <div
+            style={{
+              fontSize: "0.85rem",
+              lineHeight: 1.6,
+              color: "var(--foreground)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {aiSummary ? (
+              renderMarkdown(aiSummary)
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                <div style={{ display: "flex", gap: "0.3rem", alignItems: "center" }}>
+                  <span style={{ fontSize: "0.8rem", color: "#6366f1", fontWeight: 600 }}>Analyzing colleges using Gemini...</span>
+                  <div style={{ display: "flex", gap: "0.25rem" }}>
+                    <span style={{ width: "4px", height: "4px", borderRadius: "50%", background: "#6366f1", display: "inline-block", animation: "bounce-bubble 0.8s infinite alternate" }} />
+                    <span style={{ width: "4px", height: "4px", borderRadius: "50%", background: "#6366f1", display: "inline-block", animation: "bounce-bubble 0.8s infinite alternate 0.2s" }} />
+                    <span style={{ width: "4px", height: "4px", borderRadius: "50%", background: "#6366f1", display: "inline-block", animation: "bounce-bubble 0.8s infinite alternate 0.4s" }} />
+                  </div>
+                </div>
+                <div className="skeleton" style={{ height: "0.8rem", width: "95%" }} />
+                <div className="skeleton" style={{ height: "0.8rem", width: "80%" }} />
+                <div className="skeleton" style={{ height: "0.8rem", width: "85%" }} />
+              </div>
+            )}
+          </div>
+          <style>{`
+            @keyframes bounce-bubble {
+              from { transform: translateY(0); }
+              to { transform: translateY(-4px); }
+            }
+          `}</style>
+        </div>
+      )}
+
+      {/* ── Table ────────────────────────────────────────────────── */}
+      <div style={{ overflowX: "auto" }}>
+        <table
+          style={{
+            width: "100%",
+            minWidth: "580px",
+            borderCollapse: "collapse",
+            tableLayout: "fixed",
+            fontSize: "0.875rem",
+          }}
+        >
           <thead>
-            <tr className="border-b border-slate-200 bg-white">
-              {/* Header column */}
-              <th className="w-1/4 p-4 text-left font-bold text-slate-500 border-r border-slate-100">
-                Attributes
+            <tr style={{ borderBottom: "1.5px solid rgba(99,102,241,0.1)" }}>
+              {/* Label column */}
+              <th
+                style={{
+                  width: "22%",
+                  padding: "1rem",
+                  textAlign: "left",
+                  fontSize: "0.72rem",
+                  fontWeight: 800,
+                  color: "#94a3b8",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  background: "rgba(255, 255, 255, 0.02)",
+                  borderRight: "1px solid var(--border-subtle)",
+                }}
+              >
+                Attribute
               </th>
-              
+
               {/* College columns */}
-              {collegesToCompare.map((college) => (
-                <th key={college.id} className="p-4 text-center border-r border-slate-100 relative group">
+              {colleges.map((college) => (
+                <th
+                  key={college.id}
+                  style={{
+                    padding: "1.25rem 1rem",
+                    textAlign: "center",
+                    borderRight: "1px solid var(--border-subtle)",
+                    position: "relative",
+                    background: "transparent",
+                    verticalAlign: "top",
+                  }}
+                >
                   <button
                     onClick={() => handleRemove(college.id)}
-                    className="absolute top-2 right-2 text-slate-400 hover:text-rose-600 text-xs font-bold cursor-pointer"
-                    title="Remove from comparison"
+                    id={`remove-${college.id}`}
+                    style={{
+                      position: "absolute",
+                      top: "0.6rem",
+                      right: "0.6rem",
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      color: "#94a3b8",
+                      background: "rgba(100,116,139,0.08)",
+                      border: "1px solid rgba(100,116,139,0.15)",
+                      borderRadius: "0.35rem",
+                      padding: "0.15rem 0.4rem",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget).style.color = "#dc2626";
+                      (e.currentTarget).style.background = "rgba(220,38,38,0.08)";
+                      (e.currentTarget).style.borderColor = "rgba(220,38,38,0.2)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget).style.color = "#94a3b8";
+                      (e.currentTarget).style.background = "rgba(100,116,139,0.08)";
+                      (e.currentTarget).style.borderColor = "rgba(100,116,139,0.15)";
+                    }}
                   >
                     ✕ Remove
                   </button>
-                  <div className="pt-2">
-                    <span className="inline-block text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700 mb-2">
+
+                  <div style={{ paddingTop: "0.5rem" }}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        fontSize: "0.65rem",
+                        fontWeight: 800,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        background: "rgba(99,102,241,0.1)",
+                        border: "1px solid rgba(99,102,241,0.18)",
+                        borderRadius: "0.4rem",
+                        padding: "0.15rem 0.5rem",
+                        color: "#4f46e5",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
                       {college.type}
                     </span>
-                    <h3 className="font-extrabold text-slate-900 line-clamp-1">{college.name}</h3>
-                    <p className="text-xs text-slate-500 mt-1">{college.location}</p>
+                    <h3
+                      style={{
+                        fontSize: "0.92rem",
+                        fontWeight: 800,
+                        color: "var(--foreground)",
+                        letterSpacing: "-0.015em",
+                        lineHeight: 1.25,
+                      }}
+                      className="line-clamp-2"
+                    >
+                      <Link
+                        href={`/college/${college.id}`}
+                        style={{ textDecoration: "none", color: "inherit", transition: "color 0.2s ease" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = "#6366f1")}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = "inherit")}
+                      >
+                        {college.name}
+                      </Link>
+                    </h3>
+                    <p style={{ fontSize: "0.72rem", color: "var(--foreground)", opacity: 0.5, marginTop: "0.25rem" }}>
+                      {college.location}
+                    </p>
                   </div>
                 </th>
               ))}
-              
-              {/* Fill empty comparison columns to preserve structure if less than 3 */}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <th key={`empty-h-${i}`} className="p-4 text-slate-300 font-normal border-r border-slate-100 italic bg-slate-50/50">
-                  <div className="py-6 text-center text-xs">
-                    Slot Available
+
+              {/* Empty filler columns */}
+              {Array.from({ length: 3 - colleges.length }).map((_, i) => (
+                <th
+                  key={`empty-h-${i}`}
+                  style={{
+                    padding: "1.5rem 1rem",
+                    textAlign: "center",
+                    borderRight: "1px solid var(--border-subtle)",
+                    background: "rgba(255, 255, 255, 0.01)",
+                    verticalAlign: "middle",
+                  }}
+                >
+                  <div
+                    style={{
+                      border: "2px dashed var(--border-subtle)",
+                      borderRadius: "0.75rem",
+                      padding: "1.5rem 0.5rem",
+                      color: "#94a3b8",
+                      fontSize: "0.72rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    + Slot Available
                   </div>
                 </th>
               ))}
             </tr>
           </thead>
+
           <tbody>
-            
-            {/* ROW 1: NIRF Ranking */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                NIRF Rank
-              </td>
-              {collegesToCompare.map((c) => {
-                const isBest = c.nirf_rank === bestRank;
-                return (
-                  <td
-                    key={c.id}
-                    className={`p-4 text-center border-r border-slate-100 ${
-                      isBest ? "bg-emerald-50/40 text-emerald-950 font-bold" : "text-slate-800"
-                    }`}
-                  >
-                    #{c.nirf_rank} {isBest && <span className="text-[10px] text-emerald-600 block">(Best)</span>}
-                  </td>
-                );
-              })}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-rank-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
-
-            {/* ROW 2: Average Placement Package */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                Average Placement
-              </td>
-              {collegesToCompare.map((c) => {
-                const isBest = c.avg_package_lpa === bestPackage;
-                return (
-                  <td
-                    key={c.id}
-                    className={`p-4 text-center border-r border-slate-100 ${
-                      isBest ? "bg-emerald-50/40 text-emerald-950 font-bold" : "text-slate-800"
-                    }`}
-                  >
-                    ₹{c.avg_package_lpa} LPA {isBest && <span className="text-[10px] text-emerald-600 block">(Best)</span>}
-                  </td>
-                );
-              })}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-pkg-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
-
-            {/* ROW 3: Annual Fees */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                Annual Fees
-              </td>
-              {collegesToCompare.map((c) => {
-                const isBest = c.fees_per_year_lakh === bestFees;
-                return (
-                  <td
-                    key={c.id}
-                    className={`p-4 text-center border-r border-slate-100 ${
-                      isBest ? "bg-emerald-50/40 text-emerald-950 font-bold" : "text-slate-800"
-                    }`}
-                  >
-                    ₹{c.fees_per_year_lakh} Lakhs {isBest && <span className="text-[10px] text-emerald-600 block">(Lowest)</span>}
-                  </td>
-                );
-              })}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-fees-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
-
-            {/* ROW 4: Historic Cutoff Percentile */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                JEE Cutoff Percentile
-              </td>
-              {collegesToCompare.map((c) => (
-                <td key={c.id} className="p-4 text-center text-slate-800 border-r border-slate-100">
-                  {c.cutoff_percentile}%
-                </td>
-              ))}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-cutoff-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
-
-            {/* ROW 5: Campus Size */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                Campus Size
-              </td>
-              {collegesToCompare.map((c) => (
-                <td key={c.id} className="p-4 text-center text-slate-800 border-r border-slate-100">
-                  {c.campus_size_acres} Acres
-                </td>
-              ))}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-size-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
-
-            {/* ROW 6: Research Score */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                Research Score (1-10)
-              </td>
-              {collegesToCompare.map((c) => {
-                const isBest = c.research_score === bestResearch;
-                return (
-                  <td
-                    key={c.id}
-                    className={`p-4 text-center border-r border-slate-100 ${
-                      isBest ? "bg-emerald-50/40 text-emerald-950 font-bold" : "text-slate-800"
-                    }`}
-                  >
-                    {c.research_score}/10 {isBest && <span className="text-[10px] text-emerald-600 block">(Best)</span>}
-                  </td>
-                );
-              })}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-res-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
-
-            {/* ROW 7: Hostel & Co-Ed */}
-            <tr className="border-b border-slate-100 hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                Campus Facilities
-              </td>
-              {collegesToCompare.map((c) => (
-                <td key={c.id} className="p-4 text-center text-slate-800 border-r border-slate-100 text-xs">
-                  <div className="space-y-1">
-                    <div>Hostel: <span className="font-semibold">{c.has_hostel ? "Yes" : "No"}</span></div>
-                    <div>Co-Ed: <span className="font-semibold">{c.is_coed ? "Yes" : "No"}</span></div>
+            {rows.map((row, rowIdx) => (
+              <tr
+                key={row.label}
+                style={{
+                  borderBottom: "1px solid var(--border-subtle)",
+                  transition: "background-color 0.15s ease",
+                  background: rowIdx % 2 === 0 ? "transparent" : "rgba(255, 255, 255, 0.01)",
+                }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = "rgba(99, 102, 241, 0.05)")}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = rowIdx % 2 === 0 ? "transparent" : "rgba(255, 255, 255, 0.01)")}
+              >
+                {/* Row label */}
+                <td
+                  style={{
+                    padding: "0.875rem 1rem",
+                    borderRight: "1px solid var(--border-subtle)",
+                    background: "rgba(255, 255, 255, 0.02)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span style={{ fontSize: "0.95rem" }}>{row.icon}</span>
+                    <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--foreground)" }}>
+                      {row.label}
+                    </span>
                   </div>
                 </td>
-              ))}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-fac-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
-              ))}
-            </tr>
 
-            {/* ROW 8: Branches Offered */}
-            <tr className="hover:bg-slate-50/30">
-              <td className="p-4 font-bold text-slate-700 border-r border-slate-100">
-                Branches Offered
+                {/* Data cells */}
+                {colleges.map((c) => {
+                  const { value, isBest, suffix } = row.render(c);
+                  return (
+                    <td
+                      key={c.id}
+                      style={{
+                        padding: "0.875rem 1rem",
+                        textAlign: "center",
+                        borderRight: "1px solid var(--border-subtle)",
+                        background: isBest ? "rgba(5, 150, 105, 0.1)" : "transparent",
+                        transition: "background 0.15s ease",
+                        verticalAlign: "middle",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "0.88rem",
+                          fontWeight: isBest ? 800 : 600,
+                          color: isBest ? "#34d399" : "var(--foreground)",
+                          whiteSpace: "pre-line",
+                        }}
+                      >
+                        {value}
+                      </div>
+                      {isBest && suffix && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            marginTop: "0.25rem",
+                            fontSize: "0.65rem",
+                            fontWeight: 800,
+                            color: "#059669",
+                            background: "rgba(5,150,105,0.12)",
+                            border: "1px solid rgba(5,150,105,0.2)",
+                            borderRadius: "999px",
+                            padding: "0.1rem 0.5rem",
+                          }}
+                        >
+                          ✓ {suffix}
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+
+                {/* Filler cells */}
+                {Array.from({ length: 3 - colleges.length }).map((_, i) => (
+                  <td
+                    key={`empty-${row.label}-${i}`}
+                    style={{
+                      borderRight: "1px solid rgba(99,102,241,0.08)",
+                      background: "rgba(248,249,255,0.3)",
+                    }}
+                  />
+                ))}
+              </tr>
+            ))}
+
+            {/* Branches row */}
+            <tr
+              style={{ borderBottom: "none" }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = "rgba(238,240,255,0.4)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = "transparent")}
+            >
+              <td
+                style={{
+                  padding: "0.875rem 1rem",
+                  borderRight: "1px solid rgba(99,102,241,0.08)",
+                  background: "rgba(248,249,255,0.6)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.95rem" }}>🎓</span>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--foreground)", opacity: 0.7 }}>
+                    Branches
+                  </span>
+                </div>
               </td>
-              {collegesToCompare.map((c) => (
-                <td key={c.id} className="p-4 text-center border-r border-slate-100">
-                  <div className="flex flex-wrap gap-1.5 justify-center max-h-[160px] overflow-y-auto">
+
+              {colleges.map((c) => (
+                <td
+                  key={c.id}
+                  style={{
+                    padding: "0.875rem 1rem",
+                    textAlign: "center",
+                    borderRight: "1px solid rgba(99,102,241,0.08)",
+                    verticalAlign: "top",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "0.35rem",
+                      justifyContent: "center",
+                      maxHeight: "160px",
+                      overflowY: "auto",
+                    }}
+                  >
                     {c.branches.map((b) => (
                       <span
                         key={b}
-                        className="inline-block text-[10px] bg-slate-100 border border-slate-200/60 rounded px-1.5 py-0.5 text-slate-700"
+                        style={{
+                          display: "inline-block",
+                          fontSize: "0.65rem",
+                          fontWeight: 600,
+                          background: "rgba(99,102,241,0.07)",
+                          border: "1px solid rgba(99,102,241,0.14)",
+                          borderRadius: "0.375rem",
+                          padding: "0.15rem 0.5rem",
+                          color: "#4f46e5",
+                        }}
                       >
                         {b}
                       </span>
@@ -308,11 +660,17 @@ export default function CompareClient({ initialColleges }: CompareClientProps) {
                   </div>
                 </td>
               ))}
-              {Array.from({ length: 3 - collegesToCompare.length }).map((_, i) => (
-                <td key={`empty-br-${i}`} className="border-r border-slate-100 bg-slate-50/50" />
+
+              {Array.from({ length: 3 - colleges.length }).map((_, i) => (
+                <td
+                  key={`empty-br-${i}`}
+                  style={{
+                    borderRight: "1px solid rgba(99,102,241,0.08)",
+                    background: "rgba(248,249,255,0.3)",
+                  }}
+                />
               ))}
             </tr>
-
           </tbody>
         </table>
       </div>

@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import SaveCollegeButton from "../../../components/SaveCollegeButton";
 
 interface CollegeActionsClientProps {
   collegeId: string;
@@ -10,16 +11,18 @@ interface CollegeActionsClientProps {
 
 export default function CollegeActionsClient({ collegeId, collegeName }: CollegeActionsClientProps) {
   const router = useRouter();
+  const [adding, setAdding] = useState(false);
 
   const handleAddToCompare = () => {
-    // We use a simple localStorage to persist comparisons between pages
-    const storedCompareStr = localStorage.getItem("compare_colleges");
+    setAdding(true);
+
+    const storedCompareStr  = localStorage.getItem("compare_colleges");
     let currentCompare: string[] = [];
 
     if (storedCompareStr) {
       try {
         currentCompare = JSON.parse(storedCompareStr);
-      } catch (e) {
+      } catch {
         currentCompare = [];
       }
     }
@@ -33,6 +36,7 @@ export default function CollegeActionsClient({ collegeId, collegeName }: College
     if (currentCompare.length >= 3) {
       alert("You can compare a maximum of 3 colleges. Please clear existing selections first.");
       router.push(`/compare?ids=${currentCompare.join(",")}`);
+      setAdding(false);
       return;
     }
 
@@ -43,19 +47,51 @@ export default function CollegeActionsClient({ collegeId, collegeName }: College
   };
 
   return (
-    <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-slate-200">
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.6rem",
+        paddingTop: "1rem",
+        marginTop: "0.25rem",
+        borderTop: "1px solid rgba(99,102,241,0.1)",
+      }}
+    >
+      <SaveCollegeButton collegeId={collegeId} />
       <button
+        id="detail-back-btn"
         onClick={() => router.back()}
-        className="inline-flex justify-center items-center rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 shadow-sm transition-colors cursor-pointer"
+        className="btn-secondary"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "0.35rem",
+          padding: "0.65rem",
+          fontSize: "0.82rem",
+          width: "100%",
+        }}
       >
-        &larr; Back to Results
+        ← Back to Results
       </button>
 
       <button
+        id="detail-add-compare"
         onClick={handleAddToCompare}
-        className="inline-flex justify-center items-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 shadow-sm transition-colors cursor-pointer"
+        disabled={adding}
+        className="btn-primary"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "0.35rem",
+          padding: "0.65rem",
+          fontSize: "0.82rem",
+          width: "100%",
+          opacity: adding ? 0.75 : 1,
+        }}
       >
-        Add to Compare &amp; View
+        {adding ? "Adding…" : "⚖️ Add to Compare"}
       </button>
     </div>
   );

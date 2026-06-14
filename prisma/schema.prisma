@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String         @id @default(cuid())
+  name           String?
+  email          String         @unique
+  passwordHash   String?
+  image          String?
+  provider       String         @default("email")
+  providerId     String?
+  wishlists      Wishlist[]
+  reviews        Review[]
+  searches       SavedSearch[]
+  comparisons    SavedComparison[]
+  chats          AIChat[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model College {
+  id             String         @id
+  name           String
+  shortName      String
+  type           String
+  location       String
+  description    String
+  nirfRank       Int?
+  feesPerYear    Decimal        @db.Decimal(8, 2)
+  researchScore  Decimal?       @db.Decimal(4, 2)
+  branches       Branch[]
+  placements     Placement[]
+  cutoffs        Cutoff[]
+  reviews        Review[]
+  wishlists      Wishlist[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model Branch {
+  id        String    @id @default(cuid())
+  name      String
+  collegeId String
+  college   College   @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  cutoffs   Cutoff[]
+  @@unique([collegeId, name])
+}
+
+model Placement {
+  id             String   @id @default(cuid())
+  collegeId      String
+  year           Int
+  averagePackage Decimal  @db.Decimal(8, 2)
+  medianPackage  Decimal? @db.Decimal(8, 2)
+  highestPackage Decimal? @db.Decimal(8, 2)
+  placementRate  Decimal? @db.Decimal(5, 2)
+  college        College  @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  @@unique([collegeId, year])
+}
+
+model Cutoff {
+  id         String   @id @default(cuid())
+  collegeId  String
+  branchId   String?
+  year       Int
+  category   String
+  homeState  Boolean  @default(false)
+  percentile Decimal? @db.Decimal(5, 2)
+  closingRank Int?
+  college    College  @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  branch     Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  rating    Int
+  comment   String
+  userId    String
+  collegeId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  college   College  @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([userId, collegeId])
+}
+
+model Wishlist {
+  id        String   @id @default(cuid())
+  userId    String
+  collegeId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  college   College  @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([userId, collegeId])
+}
+
+model SavedSearch {
+  id        String   @id @default(cuid())
+  userId    String
+  label     String
+  query     Json
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model SavedComparison {
+  id         String   @id @default(cuid())
+  userId     String
+  collegeIds String[]
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+}
+
+model AIChat {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String?
+  messages  Json
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
